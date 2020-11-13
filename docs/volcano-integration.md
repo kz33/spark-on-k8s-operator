@@ -16,7 +16,7 @@ same environment, please refer [Quick Start Guide](https://github.com/volcano-sh
 Within the help of Helm chart, Kubernetes Operator for Apache Spark with Volcano can be easily installed with the command below:
 ```bash
 $ helm repo add incubator http://storage.googleapis.com/kubernetes-charts-incubator
-$ helm install incubator/sparkoperator --namespace spark-operator --set enableBatchScheduler=true
+$ helm install incubator/sparkoperator --namespace spark-operator --set enableBatchScheduler=true --set enableWebhook=true
 ```
 
 # Run Spark Application with Volcano scheduler
@@ -31,11 +31,11 @@ metadata:
 spec:
   type: Scala
   mode: cluster
-  image: "gcr.io/spark-operator/spark:v2.4.5"
+  image: "gcr.io/spark-operator/spark:v3.0.0"
   imagePullPolicy: Always
   mainClass: org.apache.spark.examples.SparkPi
-  mainApplicationFile: "local:///opt/spark/examples/jars/spark-examples_2.11-2.4.5.jar"
-  sparkVersion: "2.4.5"
+  mainApplicationFile: "local:///opt/spark/examples/jars/spark-examples_2.12-3.0.0.jar"
+  sparkVersion: "3.0.0"
   batchScheduler: "volcano"   #Note: the batch scheduler name must be specified with `volcano`
   restartPolicy:
     type: Never
@@ -49,7 +49,7 @@ spec:
     coreLimit: "1200m"
     memory: "512m"        
     labels:
-      version: 2.4.5
+      version: 3.0.0
     serviceAccount: spark
     volumeMounts:
       - name: "test-volume"
@@ -59,7 +59,7 @@ spec:
     instances: 1
     memory: "512m"    
     labels:
-      version: 2.4.5
+      version: 3.0.0
     volumeMounts:
       - name: "test-volume"
         mountPath: "/tmp"
@@ -78,7 +78,7 @@ If SparkApplication is configured to run with Volcano, there are some details un
 1. Kubernetes Operator for Apache Spark's webhook will patch pods' `schedulerName` according to the `batchScheduler` in SparkApplication Spec.
 2. Before submitting spark application, Kubernetes Operator for Apache Spark will create a Volcano native resource 
    `PodGroup`[here](https://github.com/volcano-sh/volcano/blob/a8fb05ce6c6902e366cb419d6630d66fc759121e/pkg/apis/scheduling/v1alpha2/types.go#L93) for the whole application.
-   and as a brief introduction，most of the Volcano's advanced scheduling features, such as pod delay creation, resource fairness and gang scheduling are all depend on this resource. 
+   and as a brief introduction, most of the Volcano's advanced scheduling features, such as pod delay creation, resource fairness and gang scheduling are all depend on this resource. 
    Also a new pod annotation named `scheduling.k8s.io/group-name` will be added.
 3. Volcano scheduler will take over all of the pods that both have schedulerName and annotation correctly configured for scheduling.
 

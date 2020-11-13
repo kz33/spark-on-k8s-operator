@@ -53,7 +53,7 @@ func patchSparkPod(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchOperat
 	patchOps = append(patchOps, addGeneralConfigMaps(pod, app)...)
 	patchOps = append(patchOps, addSparkConfigMap(pod, app)...)
 	patchOps = append(patchOps, addHadoopConfigMap(pod, app)...)
-	patchOps = append(patchOps, addPrometheusConfigMap(pod, app)...)
+	patchOps = append(patchOps, getPrometheusConfigPatches(pod, app)...)
 	patchOps = append(patchOps, addTolerations(pod, app)...)
 	patchOps = append(patchOps, addSidecarContainers(pod, app)...)
 	patchOps = append(patchOps, addInitContainers(pod, app)...)
@@ -68,11 +68,21 @@ func patchSparkPod(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchOperat
 		patchOps = append(patchOps, *op)
 	}
 
+	op = addPriorityClassName(pod, app)
+	if op != nil {
+		patchOps = append(patchOps, *op)
+	}
+
 	if pod.Spec.Affinity == nil {
 		op := addAffinity(pod, app)
 		if op != nil {
 			patchOps = append(patchOps, *op)
 		}
+	}
+
+	op = addPodSecurityContext(pod, app)
+	if op != nil {
+		patchOps = append(patchOps, *op)
 	}
 
 	op = addSecurityContext(pod, app)
@@ -141,7 +151,11 @@ func addVolumes(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchOperation
 				ops = append(ops, addVolume(pod, v))
 				addedVolumeMap[m.Name] = v
 			}
-			ops = append(ops, addVolumeMount(pod, m))
+			vmPatchOp := addVolumeMount(pod, m)
+			if vmPatchOp == nil {
+				return nil
+			}
+			ops = append(ops, *vmPatchOp)
 		}
 	}
 
@@ -162,14 +176,11 @@ func addVolume(pod *corev1.Pod, volume corev1.Volume) patchOperation {
 	return patchOperation{Op: "add", Path: path, Value: value}
 }
 
-func addVolumeMount(pod *corev1.Pod, mount corev1.VolumeMount) patchOperation {
-	i := 0
-	// Find the driver or executor container in the pod.
-	for ; i < len(pod.Spec.Containers); i++ {
-		if pod.Spec.Containers[i].Name == config.SparkDriverContainerName ||
-			pod.Spec.Containers[i].Name == config.SparkExecutorContainerName {
-			break
-		}
+func addVolumeMount(pod *corev1.Pod, mount corev1.VolumeMount) *patchOperation {
+	i := findContainer(pod)
+	if i < 0 {
+		glog.Warningf("not able to add VolumeMount %s as Spark container was not found in pod %s", mount.Name, pod.Name)
+		return nil
 	}
 
 	path := fmt.Sprintf("/spec/containers/%d/volumeMounts", i)
@@ -182,26 +193,21 @@ func addVolumeMount(pod *corev1.Pod, mount corev1.VolumeMount) patchOperation {
 	}
 	pod.Spec.Containers[i].VolumeMounts = append(pod.Spec.Containers[i].VolumeMounts, mount)
 
-	return patchOperation{Op: "add", Path: path, Value: value}
+	return &patchOperation{Op: "add", Path: path, Value: value}
 }
 
 func addEnvVars(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchOperation {
 	var envVars []corev1.EnvVar
-	var containerName string
 	if util.IsDriverPod(pod) {
 		envVars = app.Spec.Driver.Env
-		containerName = config.SparkDriverContainerName
 	} else if util.IsExecutorPod(pod) {
 		envVars = app.Spec.Executor.Env
-		containerName = config.SparkExecutorContainerName
 	}
 
-	i := 0
-	// Find the driver or executor container in the pod.
-	for ; i < len(pod.Spec.Containers); i++ {
-		if pod.Spec.Containers[i].Name == containerName {
-			break
-		}
+	i := findContainer(pod)
+	if i < 0 {
+		glog.Warningf("not able to add EnvVars as Spark container was not found in pod %s", pod.Name)
+		return nil
 	}
 	basePath := fmt.Sprintf("/spec/containers/%d/env", i)
 
@@ -229,21 +235,16 @@ func addEnvVars(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchOperation
 
 func addEnvFrom(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchOperation {
 	var envFrom []corev1.EnvFromSource
-	var containerName string
 	if util.IsDriverPod(pod) {
 		envFrom = app.Spec.Driver.EnvFrom
-		containerName = config.SparkDriverContainerName
 	} else if util.IsExecutorPod(pod) {
 		envFrom = app.Spec.Executor.EnvFrom
-		containerName = config.SparkExecutorContainerName
 	}
 
-	i := 0
-	// Find the driver or executor container in the pod.
-	for ; i < len(pod.Spec.Containers); i++ {
-		if pod.Spec.Containers[i].Name == containerName {
-			break
-		}
+	i := findContainer(pod)
+	if i < 0 {
+		glog.Warningf("not able to add EnvFrom as Spark container was not found in pod %s", pod.Name)
+		return nil
 	}
 	basePath := fmt.Sprintf("/spec/containers/%d/envFrom", i)
 
@@ -269,14 +270,11 @@ func addEnvFrom(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchOperation
 	return patchOps
 }
 
-func addEnvironmentVariable(pod *corev1.Pod, envName, envValue string) patchOperation {
-	i := 0
-	// Find the driver or executor container in the pod.
-	for ; i < len(pod.Spec.Containers); i++ {
-		if pod.Spec.Containers[i].Name == config.SparkDriverContainerName ||
-			pod.Spec.Containers[i].Name == config.SparkExecutorContainerName {
-			break
-		}
+func addEnvironmentVariable(pod *corev1.Pod, envName, envValue string) *patchOperation {
+	i := findContainer(pod)
+	if i < 0 {
+		glog.Warningf("not able to add environment variable %s as Spark container was not found in pod %s", envName, pod.Name)
+		return nil
 	}
 
 	path := fmt.Sprintf("/spec/containers/%d/env", i)
@@ -288,7 +286,7 @@ func addEnvironmentVariable(pod *corev1.Pod, envName, envValue string) patchOper
 		value = corev1.EnvVar{Name: envName, Value: envValue}
 	}
 
-	return patchOperation{Op: "add", Path: path, Value: value}
+	return &patchOperation{Op: "add", Path: path, Value: value}
 }
 
 func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchOperation {
@@ -296,9 +294,16 @@ func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchOp
 	sparkConfigMapName := app.Spec.SparkConfigMap
 	if sparkConfigMapName != nil {
 		patchOps = append(patchOps, addConfigMapVolume(pod, *sparkConfigMapName, config.SparkConfigMapVolumeName))
-		patchOps = append(patchOps, addConfigMapVolumeMount(pod, config.SparkConfigMapVolumeName,
-			config.DefaultSparkConfDir))
-		patchOps = append(patchOps, addEnvironmentVariable(pod, config.SparkConfDirEnvVar, config.DefaultSparkConfDir))
+		vmPatchOp := addConfigMapVolumeMount(pod, config.SparkConfigMapVolumeName, config.DefaultSparkConfDir)
+		if vmPatchOp == nil {
+			return nil
+		}
+		patchOps = append(patchOps, *vmPatchOp)
+		envPatchOp := addEnvironmentVariable(pod, config.SparkConfDirEnvVar, config.DefaultSparkConfDir)
+		if envPatchOp == nil {
+			return nil
+		}
+		patchOps = append(patchOps, *envPatchOp)
 	}
 	return patchOps
 }
@@ -308,9 +313,16 @@ func addHadoopConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchO
 	hadoopConfigMapName := app.Spec.HadoopConfigMap
 	if hadoopConfigMapName != nil {
 		patchOps = append(patchOps, addConfigMapVolume(pod, *hadoopConfigMapName, config.HadoopConfigMapVolumeName))
-		patchOps = append(patchOps, addConfigMapVolumeMount(pod, config.HadoopConfigMapVolumeName,
-			config.DefaultHadoopConfDir))
-		patchOps = append(patchOps, addEnvironmentVariable(pod, config.HadoopConfDirEnvVar, config.DefaultHadoopConfDir))
+		vmPatchOp := addConfigMapVolumeMount(pod, config.HadoopConfigMapVolumeName, config.DefaultHadoopConfDir)
+		if vmPatchOp == nil {
+			return nil
+		}
+		patchOps = append(patchOps, *vmPatchOp)
+		envPatchOp := addEnvironmentVariable(pod, config.HadoopConfDirEnvVar, config.DefaultHadoopConfDir)
+		if envPatchOp == nil {
+			return nil
+		}
+		patchOps = append(patchOps, *envPatchOp)
 	}
 	return patchOps
 }
@@ -331,15 +343,19 @@ func addGeneralConfigMaps(pod *corev1.Pod, app *v1beta2.SparkApplication) []patc
 			glog.V(2).Infof("ConfigMap volume name is too long. Truncating to length %d. Result: %s.", maxNameLength, volumeName)
 		}
 		patchOps = append(patchOps, addConfigMapVolume(pod, namePath.Name, volumeName))
-		patchOps = append(patchOps, addConfigMapVolumeMount(pod, volumeName, namePath.Path))
+		vmPatchOp := addConfigMapVolumeMount(pod, volumeName, namePath.Path)
+		if vmPatchOp == nil {
+			return nil
+		}
+		patchOps = append(patchOps, *vmPatchOp)
 	}
 	return patchOps
 }
 
-func addPrometheusConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchOperation {
+func getPrometheusConfigPatches(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchOperation {
 	// Skip if Prometheus Monitoring is not enabled or an in-container ConfigFile is used,
 	// in which cases a Prometheus ConfigMap won't be created.
-	if !app.PrometheusMonitoringEnabled() || app.HasPrometheusConfigFile() {
+	if !app.PrometheusMonitoringEnabled() || (app.HasMetricsPropertiesFile() && app.HasPrometheusConfigFile()) {
 		return nil
 	}
 
@@ -354,9 +370,49 @@ func addPrometheusConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication) []pa
 	name := config.GetPrometheusConfigMapName(app)
 	volumeName := name + "-vol"
 	mountPath := config.PrometheusConfigMapMountPath
+	port := config.DefaultPrometheusJavaAgentPort
+	if app.Spec.Monitoring.Prometheus.Port != nil {
+		port = *app.Spec.Monitoring.Prometheus.Port
+	}
+	protocol := config.DefaultPrometheusPortProtocol
 	patchOps = append(patchOps, addConfigMapVolume(pod, name, volumeName))
-	patchOps = append(patchOps, addConfigMapVolumeMount(pod, volumeName, mountPath))
+	vmPatchOp := addConfigMapVolumeMount(pod, volumeName, mountPath)
+	if vmPatchOp == nil {
+		glog.Warningf("could not mount volume %s in path %s", volumeName, mountPath)
+		return nil
+	}
+	patchOps = append(patchOps, *vmPatchOp)
+	portPatchOp := addContainerPort(pod, port, protocol)
+	if portPatchOp == nil {
+		glog.Warningf("could not expose port %d to scrape metrics outside the pod", port)
+		return nil
+	}
+	patchOps = append(patchOps, *portPatchOp)
+
 	return patchOps
+}
+
+func addContainerPort(pod *corev1.Pod, port int32, protocol string) *patchOperation {
+	i := findContainer(pod)
+	if i < 0 {
+		glog.Warningf("not able to add containerPort %d as Spark container was not found in pod %s", port, pod.Name)
+		return nil
+	}
+
+	path := fmt.Sprintf("/spec/containers/%d/ports", i)
+	containerPort := corev1.ContainerPort{
+		ContainerPort: port,
+		Protocol:      corev1.Protocol(protocol),
+	}
+	var value interface{}
+	if len(pod.Spec.Containers[i].Ports) == 0 {
+		value = []corev1.ContainerPort{containerPort}
+	} else {
+		path += "/-"
+		value = containerPort
+	}
+	pod.Spec.Containers[i].Ports = append(pod.Spec.Containers[i].Ports, containerPort)
+	return &patchOperation{Op: "add", Path: path, Value: value}
 }
 
 func addConfigMapVolume(pod *corev1.Pod, configMapName string, configMapVolumeName string) patchOperation {
@@ -373,7 +429,7 @@ func addConfigMapVolume(pod *corev1.Pod, configMapName string, configMapVolumeNa
 	return addVolume(pod, volume)
 }
 
-func addConfigMapVolumeMount(pod *corev1.Pod, configMapVolumeName string, mountPath string) patchOperation {
+func addConfigMapVolumeMount(pod *corev1.Pod, configMapVolumeName string, mountPath string) *patchOperation {
 	mount := corev1.VolumeMount{
 		Name:      configMapVolumeName,
 		ReadOnly:  true,
@@ -467,6 +523,19 @@ func addSchedulerName(pod *corev1.Pod, app *v1beta2.SparkApplication) *patchOper
 	return &patchOperation{Op: "add", Path: "/spec/schedulerName", Value: *schedulerName}
 }
 
+func addPriorityClassName(pod *corev1.Pod, app *v1beta2.SparkApplication) *patchOperation {
+	var priorityClassName *string
+
+	if app.Spec.BatchSchedulerOptions != nil {
+		priorityClassName = app.Spec.BatchSchedulerOptions.PriorityClassName
+	}
+
+	if priorityClassName == nil || *priorityClassName == "" {
+		return nil
+	}
+	return &patchOperation{Op: "add", Path: "/spec/priorityClassName", Value: *priorityClassName}
+}
+
 func addToleration(pod *corev1.Pod, toleration corev1.Toleration, first bool) patchOperation {
 	path := "/spec/tolerations"
 	var value interface{}
@@ -480,18 +549,46 @@ func addToleration(pod *corev1.Pod, toleration corev1.Toleration, first bool) pa
 	return patchOperation{Op: "add", Path: path, Value: value}
 }
 
-func addSecurityContext(pod *corev1.Pod, app *v1beta2.SparkApplication) *patchOperation {
+func addPodSecurityContext(pod *corev1.Pod, app *v1beta2.SparkApplication) *patchOperation {
 	var secContext *corev1.PodSecurityContext
 	if util.IsDriverPod(pod) {
-		secContext = app.Spec.Driver.SecurityContenxt
+		secContext = app.Spec.Driver.PodSecurityContext
 	} else if util.IsExecutorPod(pod) {
-		secContext = app.Spec.Executor.SecurityContenxt
+		secContext = app.Spec.Executor.PodSecurityContext
 	}
 
 	if secContext == nil {
 		return nil
 	}
 	return &patchOperation{Op: "add", Path: "/spec/securityContext", Value: *secContext}
+}
+
+func addSecurityContext(pod *corev1.Pod, app *v1beta2.SparkApplication) *patchOperation {
+	var secContext *corev1.SecurityContext
+	if util.IsDriverPod(pod) {
+		secContext = app.Spec.Driver.SecurityContext
+	} else if util.IsExecutorPod(pod) {
+		secContext = app.Spec.Executor.SecurityContext
+	}
+
+	if secContext == nil {
+		return nil
+	}
+
+	i := 0
+	// Find the driver/executor container in the pod.
+	for ; i < len(pod.Spec.Containers); i++ {
+		if pod.Spec.Containers[i].Name == config.SparkDriverContainerName || pod.Spec.Containers[i].Name == config.SparkExecutorContainerName {
+			break
+		}
+	}
+	if i == len(pod.Spec.Containers) {
+		glog.Warningf("Spark driver/executor container not found in pod %s", pod.Name)
+		return nil
+	}
+
+	path := fmt.Sprintf("/spec/containers/%d/securityContext", i)
+	return &patchOperation{Op: "add", Path: path, Value: *secContext}
 }
 
 func addSidecarContainers(pod *corev1.Pod, app *v1beta2.SparkApplication) []patchOperation {
@@ -559,14 +656,13 @@ func addGPU(pod *corev1.Pod, app *v1beta2.SparkApplication) *patchOperation {
 		glog.V(2).Infof("GPU Quantity must be positive. Current gpu spec: %+v", gpu)
 		return nil
 	}
-	i := 0
-	// Find the driver or executor container in the pod.
-	for ; i < len(pod.Spec.Containers); i++ {
-		if pod.Spec.Containers[i].Name == config.SparkDriverContainerName ||
-			pod.Spec.Containers[i].Name == config.SparkExecutorContainerName {
-			break
-		}
+
+	i := findContainer(pod)
+	if i < 0 {
+		glog.Warningf("not able to add GPU as Spark container was not found in pod %s", pod.Name)
+		return nil
 	}
+
 	path := fmt.Sprintf("/spec/containers/%d/resources/limits", i)
 	var value interface{}
 	if len(pod.Spec.Containers[i].Resources.Limits) == 0 {
@@ -642,6 +738,7 @@ func addPodLifeCycleConfig(pod *corev1.Pod, app *v1beta2.SparkApplication) *patc
 	if lifeCycle == nil {
 		return nil
 	}
+
 	i := 0
 	// Find the driver container in the pod.
 	for ; i < len(pod.Spec.Containers); i++ {
@@ -649,6 +746,34 @@ func addPodLifeCycleConfig(pod *corev1.Pod, app *v1beta2.SparkApplication) *patc
 			break
 		}
 	}
+	if i == len(pod.Spec.Containers) {
+		glog.Warningf("Spark driver container not found in pod %s", pod.Name)
+		return nil
+	}
+
 	path := fmt.Sprintf("/spec/containers/%d/lifecycle", i)
 	return &patchOperation{Op: "add", Path: path, Value: *lifeCycle}
+}
+
+func findContainer(pod *corev1.Pod) int {
+	var candidateContainerNames []string
+	if util.IsDriverPod(pod) {
+		candidateContainerNames = append(candidateContainerNames, config.SparkDriverContainerName)
+	} else if util.IsExecutorPod(pod) {
+		// Spark 3.x changed the default executor container name so we need to include both.
+		candidateContainerNames = append(candidateContainerNames, config.SparkExecutorContainerName, config.Spark3DefaultExecutorContainerName)
+	}
+
+	if len(candidateContainerNames) == 0 {
+		return -1
+	}
+
+	for i := 0; i < len(pod.Spec.Containers); i++ {
+		for _, name := range candidateContainerNames {
+			if pod.Spec.Containers[i].Name == name {
+				return i
+			}
+		}
+	}
+	return -1
 }

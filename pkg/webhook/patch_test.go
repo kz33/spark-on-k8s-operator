@@ -152,7 +152,7 @@ func TestPatchSparkPod_Volumes_Subpath(t *testing.T) {
 		},
 		Spec: v1beta2.SparkApplicationSpec{
 			Volumes: []corev1.Volume{
-				corev1.Volume{
+				{
 					Name: "spark-pvc",
 					VolumeSource: corev1.VolumeSource{
 						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
@@ -219,7 +219,7 @@ func TestPatchSparkPod_Volumes(t *testing.T) {
 		},
 		Spec: v1beta2.SparkApplicationSpec{
 			Volumes: []corev1.Volume{
-				corev1.Volume{
+				{
 					Name: "spark",
 					VolumeSource: corev1.VolumeSource{
 						HostPath: &corev1.HostPathVolumeSource{
@@ -227,7 +227,7 @@ func TestPatchSparkPod_Volumes(t *testing.T) {
 						},
 					},
 				},
-				corev1.Volume{
+				{
 					Name: "foo",
 					VolumeSource: corev1.VolumeSource{
 						EmptyDir: &corev1.EmptyDirVolumeSource{},
@@ -498,6 +498,7 @@ func TestPatchSparkPod_HadoopConfigMap(t *testing.T) {
 }
 
 func TestPatchSparkPod_PrometheusConfigMaps(t *testing.T) {
+	var appPort int32 = 9999
 	app := &v1beta2.SparkApplication{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "spark-test",
@@ -505,7 +506,12 @@ func TestPatchSparkPod_PrometheusConfigMaps(t *testing.T) {
 		},
 		Spec: v1beta2.SparkApplicationSpec{
 			Monitoring: &v1beta2.MonitoringSpec{
-				Prometheus:          &v1beta2.PrometheusSpec{},
+				Prometheus: &v1beta2.PrometheusSpec{
+					JmxExporterJar: "",
+					Port:           &appPort,
+					ConfigFile:     nil,
+					Configuration:  nil,
+				},
 				ExposeDriverMetrics: true,
 			},
 		},
@@ -536,6 +542,7 @@ func TestPatchSparkPod_PrometheusConfigMaps(t *testing.T) {
 
 	expectedConfigMapName := config.GetPrometheusConfigMapName(app)
 	expectedVolumeName := expectedConfigMapName + "-vol"
+	expectedContainerPort := *app.Spec.Monitoring.Prometheus.Port
 	assert.Equal(t, 1, len(modifiedPod.Spec.Volumes))
 	assert.Equal(t, expectedVolumeName, modifiedPod.Spec.Volumes[0].Name)
 	assert.True(t, modifiedPod.Spec.Volumes[0].ConfigMap != nil)
@@ -543,6 +550,8 @@ func TestPatchSparkPod_PrometheusConfigMaps(t *testing.T) {
 	assert.Equal(t, 1, len(modifiedPod.Spec.Containers[0].VolumeMounts))
 	assert.Equal(t, expectedVolumeName, modifiedPod.Spec.Containers[0].VolumeMounts[0].Name)
 	assert.Equal(t, config.PrometheusConfigMapMountPath, modifiedPod.Spec.Containers[0].VolumeMounts[0].MountPath)
+	assert.Equal(t, expectedContainerPort, modifiedPod.Spec.Containers[0].Ports[0].ContainerPort)
+	assert.Equal(t, corev1.Protocol(config.DefaultPrometheusPortProtocol), modifiedPod.Spec.Containers[0].Ports[0].Protocol)
 }
 
 func TestPatchSparkPod_Tolerations(t *testing.T) {
@@ -604,6 +613,9 @@ func TestPatchSparkPod_Tolerations(t *testing.T) {
 
 func TestPatchSparkPod_SecurityContext(t *testing.T) {
 	var user int64 = 1000
+	var user2 int64 = 2000
+	var AllowPrivilegeEscalation = false
+
 	app := &v1beta2.SparkApplication{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "spark-test",
@@ -612,15 +624,23 @@ func TestPatchSparkPod_SecurityContext(t *testing.T) {
 		Spec: v1beta2.SparkApplicationSpec{
 			Driver: v1beta2.DriverSpec{
 				SparkPodSpec: v1beta2.SparkPodSpec{
-					SecurityContenxt: &corev1.PodSecurityContext{
+					PodSecurityContext: &corev1.PodSecurityContext{
 						RunAsUser: &user,
+					},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: &AllowPrivilegeEscalation,
+						RunAsUser:                &user2,
 					},
 				},
 			},
 			Executor: v1beta2.ExecutorSpec{
 				SparkPodSpec: v1beta2.SparkPodSpec{
-					SecurityContenxt: &corev1.PodSecurityContext{
+					PodSecurityContext: &corev1.PodSecurityContext{
 						RunAsUser: &user,
+					},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: &AllowPrivilegeEscalation,
+						RunAsUser:                &user2,
 					},
 				},
 			},
@@ -649,7 +669,8 @@ func TestPatchSparkPod_SecurityContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, app.Spec.Driver.SecurityContenxt, modifiedDriverPod.Spec.SecurityContext)
+	assert.Equal(t, app.Spec.Driver.PodSecurityContext, modifiedDriverPod.Spec.SecurityContext)
+	assert.Equal(t, app.Spec.Driver.SecurityContext, modifiedDriverPod.Spec.Containers[0].SecurityContext)
 
 	executorPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -673,7 +694,8 @@ func TestPatchSparkPod_SecurityContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, app.Spec.Executor.SecurityContenxt, modifiedExecutorPod.Spec.SecurityContext)
+	assert.Equal(t, app.Spec.Executor.PodSecurityContext, modifiedExecutorPod.Spec.SecurityContext)
+	assert.Equal(t, app.Spec.Executor.SecurityContext, modifiedExecutorPod.Spec.Containers[0].SecurityContext)
 }
 
 func TestPatchSparkPod_SchedulerName(t *testing.T) {
@@ -748,6 +770,78 @@ func TestPatchSparkPod_SchedulerName(t *testing.T) {
 	}
 	//Executor scheduler name should remain the same as before when not specified in SparkApplicationSpec
 	assert.Equal(t, defaultScheduler, modifiedExecutorPod.Spec.SchedulerName)
+}
+
+func TestPatchSparkPod_PriorityClassName(t *testing.T) {
+	var priorityClassName = "critical"
+
+	app := &v1beta2.SparkApplication{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "spark-test-patch-priorityclassname",
+			UID:  "spark-test-1",
+		},
+		Spec: v1beta2.SparkApplicationSpec{
+			BatchSchedulerOptions: &v1beta2.BatchSchedulerConfiguration{
+				PriorityClassName: &priorityClassName,
+			},
+			Driver: v1beta2.DriverSpec{
+				SparkPodSpec: v1beta2.SparkPodSpec{},
+			},
+			Executor: v1beta2.ExecutorSpec{
+				SparkPodSpec: v1beta2.SparkPodSpec{},
+			},
+		},
+	}
+
+	driverPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "spark-driver",
+			Labels: map[string]string{
+				config.SparkRoleLabel:               config.SparkDriverRole,
+				config.LaunchedBySparkOperatorLabel: "true",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  config.SparkDriverContainerName,
+					Image: "spark-driver:latest",
+				},
+			},
+		},
+	}
+
+	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	//Driver priorityClassName should be populated when specified
+	assert.Equal(t, priorityClassName, modifiedDriverPod.Spec.PriorityClassName)
+
+	executorPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "spark-executor",
+			Labels: map[string]string{
+				config.SparkRoleLabel:               config.SparkExecutorRole,
+				config.LaunchedBySparkOperatorLabel: "true",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  config.SparkExecutorContainerName,
+					Image: "spark-executor:latest",
+				},
+			},
+		},
+	}
+
+	modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	//Executor priorityClassName should also be populated when specified in SparkApplicationSpec
+	assert.Equal(t, priorityClassName, modifiedExecutorPod.Spec.PriorityClassName)
 }
 
 func TestPatchSparkPod_Sidecars(t *testing.T) {
@@ -938,7 +1032,7 @@ func TestPatchSparkPod_DNSConfig(t *testing.T) {
 		Nameservers: []string{"8.8.8.8", "4.4.4.4"},
 		Searches:    []string{"svc.cluster.local", "cluster.local"},
 		Options: []corev1.PodDNSConfigOption{
-			corev1.PodDNSConfigOption{Name: "ndots", Value: &aVal},
+			{Name: "ndots", Value: &aVal},
 		},
 	}
 

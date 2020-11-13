@@ -88,8 +88,8 @@ spec:
     labels:
       version: 2.3.0
     memory: 512m
-  image: gcr.io/ynli-k8s/spark:v2.4.5
-  mainApplicationFile: local:///opt/spark/examples/jars/spark-examples_2.11-2.3.0.jar
+  image: gcr.io/ynli-k8s/spark:v3.0.0
+  mainApplicationFile: local:///opt/spark/examples/jars/spark-examples_2.12-2.3.0.jar
   mainClass: org.apache.spark.examples.SparkPi
   mode: cluster
   restartPolicy:
@@ -183,12 +183,15 @@ If enabled, the operator generates the following metrics:
 #### Spark Application Metrics
 | Metric | Description |
 | ------------- | ------------- |
-| `spark_app_submit_count`  | Total number of SparkApplication submitted by the Operator.|
+| `spark_app_count`  | Total number of SparkApplication handled by the Operator.|
+| `spark_app_submit_count`  | Total number of SparkApplication spark-submitted by the Operator.|
 | `spark_app_success_count` | Total number of SparkApplication which completed successfully.|
 | `spark_app_failure_count` | Total number of SparkApplication which failed to complete. |
 | `spark_app_running_count` | Total number of SparkApplication which are currently running.|
 | `spark_app_success_execution_time_microseconds` | Execution time for applications which succeeded.|
-| `spark_app_failure_execution_time_microseconds` |Execution time for applications which failed. |
+| `spark_app_failure_execution_time_microseconds` | Execution time for applications which failed. |
+| `spark_app_start_latency_microseconds` | Start latency of SparkApplication as type of [Prometheus Summary](https://prometheus.io/docs/concepts/metric_types/#summary). |
+| `spark_app_start_latency_seconds` | Start latency of SparkApplication as type of [Prometheus Histogram](https://prometheus.io/docs/concepts/metric_types/#histogram). |
 | `spark_app_executor_success_count` | Total number of Spark Executors which completed successfully. |
 | `spark_app_executor_failure_count` | Total number of Spark Executors which failed. |
 | `spark_app_executor_running_count` | Total number of Spark Executors which are currently running. |
@@ -225,7 +228,7 @@ and deleting the pods outside the operator might lead to incorrect metric values
 ## Driver UI Access and Ingress
 
 The operator, by default, makes the Spark UI accessible by creating a service of type `ClusterIP` which exposes the UI. This is only accessible from within the cluster.
-The operator also supports creating an optional Ingress for the UI. This can be turned on by setting the `ingress-url-format` command-line flag. The `ingress-url-format` should be a template like `{{$appName}}.{ingress_suffix}`. The `{ingress_suffix}` should be replaced by the user to indicate the cluster's ingress url and the operator will replace the `{{$appName}}` with the appropriate appName. Please note that Ingress support requires that cluster's ingress url routing is correctly set-up. For e.g. if the `ingress-url-format` is `{{$appName}}.ingress.cluster.com`, it requires that anything `*ingress.cluster.com` should be routed to the ingress-controller on the K8s cluster.
+The operator also supports creating an optional Ingress for the UI. This can be turned on by setting the `ingress-url-format` command-line flag. The `ingress-url-format` should be a template like `{{$appName}}.{ingress_suffix}/{{$appNamespace}}/{{$appName}}`. The `{ingress_suffix}` should be replaced by the user to indicate the cluster's ingress url and the operator will replace the `{{$appName}}` & `{{$appNamespace}}` with the appropriate value. Please note that Ingress support requires that cluster's ingress url routing is correctly set-up. For e.g. if the `ingress-url-format` is `{{$appName}}.ingress.cluster.com`, it requires that anything `*ingress.cluster.com` should be routed to the ingress-controller on the K8s cluster.
 
 The operator also sets both `WebUIAddress` which is accessible from within the cluster as well as `WebUIIngressAddress` as part of the `DriverInfo` field of the `SparkApplication`.
 

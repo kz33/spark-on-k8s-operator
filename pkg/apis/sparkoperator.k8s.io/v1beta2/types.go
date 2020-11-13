@@ -18,6 +18,7 @@ package v1beta2
 
 import (
 	apiv1 "k8s.io/api/core/v1"
+	extensions "k8s.io/api/extensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -61,13 +62,12 @@ type RestartPolicy struct {
 	// +optional
 	OnFailureRetries *int32 `json:"onFailureRetries,omitempty"`
 
-	// OnSubmissionFailureRetryInterval is the interval between retries on failed submissions.
-	// Interval to wait between successive retries of a failed application.
+	// OnSubmissionFailureRetryInterval is the interval in seconds between retries on failed submissions.
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	OnSubmissionFailureRetryInterval *int64 `json:"onSubmissionFailureRetryInterval,omitempty"`
 
-	// OnFailureRetryInterval is the interval between retries on failed runs.
+	// OnFailureRetryInterval is the interval in seconds between retries on failed runs.
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	OnFailureRetryInterval *int64 `json:"onFailureRetryInterval,omitempty"`
@@ -187,6 +187,10 @@ type SparkApplicationSpec struct {
 	// Mode is the deployment mode of the Spark application.
 	// +kubebuilder:validation:Enum={cluster,client}
 	Mode DeployMode `json:"mode,omitempty"`
+	// ProxyUser specifies the user to impersonate when submitting the application.
+	// It maps to the command-line flag "--proxy-user" in spark-submit.
+	// +optional
+	ProxyUser *string `json:"proxyUser,omitempty"`
 	// Image is the container image for the driver, executor, and init-container. Any custom container images for the
 	// driver, executor, or init-container takes precedence over this.
 	// +optional
@@ -273,6 +277,13 @@ type SparkApplicationSpec struct {
 	// BatchSchedulerOptions provides fine-grained control on how to batch scheduling.
 	// +optional
 	BatchSchedulerOptions *BatchSchedulerConfiguration `json:"batchSchedulerOptions,omitempty"`
+	// SparkUIOptions allows configuring the Service and the Ingress to expose the sparkUI
+	// +optional
+	SparkUIOptions *SparkUIConfiguration `json:"sparkUIOptions,omitempty"`
+	// DynamicAllocation configures dynamic allocation that becomes available for the Kubernetes
+	// scheduleer backend since Spark 3.0.
+	// +optional
+	DynamicAllocation *DynamicAllocation `json:"dynamicAllocation,omitempty"`
 }
 
 // BatchSchedulerConfiguration used to configure how to batch scheduling Spark Application
@@ -283,6 +294,24 @@ type BatchSchedulerConfiguration struct {
 	// PriorityClassName stands for the name of k8s PriorityClass resource, it's being used in Volcano batch scheduler.
 	// +optional
 	PriorityClassName *string `json:"priorityClassName,omitempty"`
+	// Resources stands for the resource list custom request for. Usually it is used to define the lower-bound limit.
+	// If specified, volcano scheduler will consider it as the resources requested.
+	// +optional
+	Resources apiv1.ResourceList `json:"resources,omitempty"`
+}
+
+// SparkUIConfiguration is for driver UI specific configuration parameters.
+type SparkUIConfiguration struct {
+	// ServicePort allows configuring the port at service level that might be different from the targetPort.
+	// TargetPort should be the same as the one defined in spark.ui.port
+	// +optional
+	ServicePort *int32 `json:"servicePort"`
+	// IngressAnnotations is a map of key,value pairs of annotations that might be added to the ingress object. i.e. specify nginx as ingress.class
+	// +optional
+	IngressAnnotations map[string]string `json:"ingressAnnotations,omitempty"`
+	// TlsHosts is useful If we need to declare SSL certificates to the ingress object
+	// +optional
+	IngressTLS []extensions.IngressTLS `json:"ingressTLS,omitempty"`
 }
 
 // ApplicationStateType represents the type of the current state of an application.
@@ -308,6 +337,18 @@ type ApplicationState struct {
 	State        ApplicationStateType `json:"state"`
 	ErrorMessage string               `json:"errorMessage,omitempty"`
 }
+
+// DriverState tells the current state of a spark driver.
+type DriverState string
+
+// Different states a spark driver may have.
+const (
+	DriverPendingState   DriverState = "PENDING"
+	DriverRunningState   DriverState = "RUNNING"
+	DriverCompletedState DriverState = "COMPLETED"
+	DriverFailedState    DriverState = "FAILED"
+	DriverUnknownState   DriverState = "UNKNOWN"
+)
 
 // ExecutorState tells the current state of an executor.
 type ExecutorState string
@@ -367,6 +408,20 @@ type Dependencies struct {
 	// PyFiles is a list of Python files the Spark application depends on.
 	// +optional
 	PyFiles []string `json:"pyFiles,omitempty"`
+	// Packages is a list of maven coordinates of jars to include on the driver and executor
+	// classpaths. This will search the local maven repo, then maven central and any additional
+	// remote repositories given by the "repositories" option.
+	// Each papckage should be of the form "groupId:artifactId:version".
+	// +optional
+	Packages []string `json:"packages,omitempty"`
+	// ExcludePackages is a list of "groupId:artifactId", to exclude while resolving the
+	// dependencies provided in Packages to avoid dependency conflicts.
+	// +optional
+	ExcludePackages []string `json:"excludePackages,omitempty"`
+	// Repositories is a list of additional remote repositories to search for the maven coordinate
+	// given with the "packages" option.
+	// +optional
+	Repositories []string `json:"repositories,omitempty"`
 }
 
 // SparkPodSpec defines common things that can be customized for a Spark driver or executor pod.
@@ -426,9 +481,12 @@ type SparkPodSpec struct {
 	// Tolerations specifies the tolerations listed in ".spec.tolerations" to be applied to the pod.
 	// +optional
 	Tolerations []apiv1.Toleration `json:"tolerations,omitempty"`
-	// SecurityContenxt specifies the PodSecurityContext to apply.
+	// PodSecurityContext specifies the PodSecurityContext to apply.
 	// +optional
-	SecurityContenxt *apiv1.PodSecurityContext `json:"securityContext,omitempty"`
+	PodSecurityContext *apiv1.PodSecurityContext `json:"podSecurityContext,omitempty"`
+	// SecurityContext specifies the container's SecurityContext to apply.
+	// +optional
+	SecurityContext *apiv1.SecurityContext `json:"securityContext,omitempty"`
 	// SchedulerName specifies the scheduler that will be used for scheduling
 	// +optional
 	SchedulerName *string `json:"schedulerName,omitempty"`
@@ -451,6 +509,9 @@ type SparkPodSpec struct {
 	// Termination grace periond seconds for the pod
 	// +optional
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
+	// ServiceAccount is the name of the custom Kubernetes service account used by the pod.
+	// +optional
+	ServiceAccount *string `json:"serviceAccount,omitempty"`
 }
 
 // DriverSpec is specification of the driver.
@@ -467,10 +528,6 @@ type DriverSpec struct {
 	// Maps to `spark.kubernetes.driver.request.cores` that is available since Spark 3.0.
 	// +optional
 	CoreRequest *string `json:"coreRequest,omitempty"`
-	// ServiceAccount is the name of the Kubernetes service account used by the driver pod
-	// when requesting executor pods from the API server.
-	// +optional
-	ServiceAccount *string `json:"serviceAccount,omitempty"`
 	// JavaOptions is a string of extra JVM options to pass to the driver. For instance,
 	// GC settings or other logging.
 	// +optional
@@ -478,6 +535,14 @@ type DriverSpec struct {
 	// Lifecycle for running preStop or postStart commands
 	// +optional
 	Lifecycle *apiv1.Lifecycle `json:"lifecycle,omitempty"`
+	// KubernetesMaster is the URL of the Kubernetes master used by the driver to manage executor pods and
+	// other Kubernetes resources. Default to https://kubernetes.default.svc.
+	// +optional
+	KubernetesMaster *string `json:"kubernetesMaster,omitempty"`
+	// ServiceAnnotations defines the annoations to be added to the Kubernetes headless service used by
+	// executors to connect to the driver.
+	// +optional
+	ServiceAnnotations map[string]string `json:"serviceAnnotations,omitempty"`
 }
 
 // ExecutorSpec is specification of the executor.
@@ -557,6 +622,10 @@ type MonitoringSpec struct {
 	// +optional
 	// If not specified, the content in spark-docker/conf/metrics.properties will be used.
 	MetricsProperties *string `json:"metricsProperties,omitempty"`
+	// MetricsPropertiesFile is the container local path of file metrics.properties for configuring
+	//the Spark metric system. If not specified, value /etc/metrics/conf/metrics.properties will be used.
+	// +optional
+	MetricsPropertiesFile *string `json:"metricsPropertiesFile,omitempty"`
 	// Prometheus is for configuring the Prometheus JMX exporter.
 	// +optional
 	Prometheus *PrometheusSpec `json:"prometheus,omitempty"`
@@ -591,6 +660,26 @@ type GPUSpec struct {
 	Quantity int64 `json:"quantity"`
 }
 
+// DynamicAllocation contains configuration options for dynamic allocation.
+type DynamicAllocation struct {
+	// Enabled controls whether dynamic allocation is enabled or not.
+	Enabled bool `json:"enabled,omitempty"`
+	// InitialExecutors is the initial number of executors to request. If .spec.executor.instances
+	// is also set, the initial number of executors is set to the bigger of that and this option.
+	// +optional
+	InitialExecutors *int32 `json:"initialExecutors,omitempty"`
+	// MinExecutors is the lower bound for the number of executors if dynamic allocation is enabled.
+	// +optional
+	MinExecutors *int32 `json:"minExecutors,omitempty"`
+	// MaxExecutors is the upper bound for the number of executors if dynamic allocation is enabled.
+	// +optional
+	MaxExecutors *int32 `json:"maxExecutors,omitempty"`
+	// ShuffleTrackingTimeout controls the timeout in milliseconds for executors that are holding
+	// shuffle data if shuffle tracking is enabled (true by default if dynamic allocation is enabled).
+	// +optional
+	ShuffleTrackingTimeout *int64 `json:"shuffleTrackingTimeout,omitempty"`
+}
+
 // PrometheusMonitoringEnabled returns if Prometheus monitoring is enabled or not.
 func (s *SparkApplication) PrometheusMonitoringEnabled() bool {
 	return s.Spec.Monitoring != nil && s.Spec.Monitoring.Prometheus != nil
@@ -601,6 +690,20 @@ func (s *SparkApplication) HasPrometheusConfigFile() bool {
 	return s.PrometheusMonitoringEnabled() &&
 		s.Spec.Monitoring.Prometheus.ConfigFile != nil &&
 		*s.Spec.Monitoring.Prometheus.ConfigFile != ""
+}
+
+// HasPrometheusConfig returns if Prometheus monitoring defines metricsProperties in the spec.
+func (s *SparkApplication) HasMetricsProperties() bool {
+	return s.PrometheusMonitoringEnabled() &&
+		s.Spec.Monitoring.MetricsProperties != nil &&
+		*s.Spec.Monitoring.MetricsProperties != ""
+}
+
+// HasPrometheusConfigFile returns if Monitoring defines metricsPropertiesFile in the spec.
+func (s *SparkApplication) HasMetricsPropertiesFile() bool {
+	return s.PrometheusMonitoringEnabled() &&
+		s.Spec.Monitoring.MetricsPropertiesFile != nil &&
+		*s.Spec.Monitoring.MetricsPropertiesFile != ""
 }
 
 // ExposeDriverMetrics returns if driver metrics should be exposed.

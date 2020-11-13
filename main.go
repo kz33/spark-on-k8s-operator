@@ -14,8 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-//go:generate hack/update-codegen.sh
-
 package main
 
 import (
@@ -58,12 +56,9 @@ var (
 	controllerThreads              = flag.Int("controller-threads", 10, "Number of worker threads used by the SparkApplication controller.")
 	resyncInterval                 = flag.Int("resync-interval", 30, "Informer resync interval in seconds.")
 	namespace                      = flag.String("namespace", apiv1.NamespaceAll, "The Kubernetes namespace to manage. Will manage custom resource objects of the managed CRD types for the whole cluster if unset.")
+	labelSelectorFilter            = flag.String("label-selector-filter", "", "A comma-separated list of key=value, or key labels to filter resources during watch and list based on the specified labels.")
 	enableWebhook                  = flag.Bool("enable-webhook", false, "Whether to enable the mutating admission webhook for admitting and patching Spark pods.")
 	enableResourceQuotaEnforcement = flag.Bool("enable-resource-quota-enforcement", false, "Whether to enable ResourceQuota enforcement for SparkApplication resources. Requires the webhook to be enabled.")
-	enableMetrics                  = flag.Bool("enable-metrics", false, "Whether to enable the metrics endpoint.")
-	metricsPort                    = flag.String("metrics-port", "10254", "Port for the metrics endpoint.")
-	metricsEndpoint                = flag.String("metrics-endpoint", "/metrics", "Metrics endpoint.")
-	metricsPrefix                  = flag.String("metrics-prefix", "", "Prefix for the metrics.")
 	ingressURLFormat               = flag.String("ingress-url-format", "", "Ingress URL format.")
 	enableLeaderElection           = flag.Bool("leader-election", false, "Enable Spark operator leader election.")
 	leaderElectionLockNamespace    = flag.String("leader-election-lock-namespace", "spark-operator", "Namespace in which to create the ConfigMap for leader election.")
@@ -71,13 +66,20 @@ var (
 	leaderElectionLeaseDuration    = flag.Duration("leader-election-lease-duration", 15*time.Second, "Leader election lease duration.")
 	leaderElectionRenewDeadline    = flag.Duration("leader-election-renew-deadline", 14*time.Second, "Leader election renew deadline.")
 	leaderElectionRetryPeriod      = flag.Duration("leader-election-retry-period", 4*time.Second, "Leader election retry period.")
-	enableBatchScheduler           = flag.Bool("enable-batch-scheduler", false,
-		fmt.Sprintf("Enable batch schedulers for pods' scheduling, the available batch schedulers are: (%s).", strings.Join(batchscheduler.GetRegisteredNames(), ",")))
+	enableBatchScheduler           = flag.Bool("enable-batch-scheduler", false, fmt.Sprintf("Enable batch schedulers for pods' scheduling, the available batch schedulers are: (%s).", strings.Join(batchscheduler.GetRegisteredNames(), ",")))
+	enableMetrics                  = flag.Bool("enable-metrics", false, "Whether to enable the metrics endpoint.")
+	metricsPort                    = flag.String("metrics-port", "10254", "Port for the metrics endpoint.")
+	metricsEndpoint                = flag.String("metrics-endpoint", "/metrics", "Metrics endpoint.")
+	metricsPrefix                  = flag.String("metrics-prefix", "", "Prefix for the metrics.")
+	metricsLabels                  util.ArrayFlags
+	metricsJobStartLatencyBuckets  util.HistogramBuckets = util.DefaultJobStartLatencyBuckets
 )
 
 func main() {
-	var metricsLabels util.ArrayFlags
 	flag.Var(&metricsLabels, "metrics-labels", "Labels for the metrics")
+	flag.Var(&metricsJobStartLatencyBuckets, "metrics-job-start-latency-buckets",
+		"Comma-separated boundary values (in seconds) for the job start latency histogram bucket; "+
+			"it accepts any numerical values that can be parsed into a 64-bit floating point")
 	flag.Parse()
 
 	// Create the client config. Use kubeConfig if given, otherwise assume in-cluster.
@@ -101,11 +103,16 @@ func main() {
 		if err != nil {
 			glog.Fatal(err)
 		}
-		resourceLock, err := resourcelock.New(resourcelock.ConfigMapsResourceLock, *leaderElectionLockNamespace, *leaderElectionLockName, kubeClient.CoreV1(), resourcelock.ResourceLockConfig{
-			Identity: hostname,
-			// TODO: This is a workaround for a nil dereference in client-go. This line can be removed when that dependency is updated.
-			EventRecorder: &record.FakeRecorder{},
-		})
+		resourceLock, err := resourcelock.New(resourcelock.ConfigMapsResourceLock,
+			*leaderElectionLockNamespace,
+			*leaderElectionLockName,
+			kubeClient.CoreV1(),
+			kubeClient.CoordinationV1(),
+			resourcelock.ResourceLockConfig{
+				Identity: hostname,
+				// TODO: This is a workaround for a nil dereference in client-go. This line can be removed when that dependency is updated.
+				EventRecorder: &record.FakeRecorder{},
+			})
 		if err != nil {
 			glog.Fatal(err)
 		}
@@ -159,10 +166,11 @@ func main() {
 	var metricConfig *util.MetricConfig
 	if *enableMetrics {
 		metricConfig = &util.MetricConfig{
-			MetricsEndpoint: *metricsEndpoint,
-			MetricsPort:     *metricsPort,
-			MetricsPrefix:   *metricsPrefix,
-			MetricsLabels:   metricsLabels,
+			MetricsEndpoint:               *metricsEndpoint,
+			MetricsPort:                   *metricsPort,
+			MetricsPrefix:                 *metricsPrefix,
+			MetricsLabels:                 metricsLabels,
+			MetricsJobStartLatencyBuckets: metricsJobStartLatencyBuckets,
 		}
 
 		glog.Info("Enabling metrics collecting and exporting to Prometheus")
@@ -244,6 +252,12 @@ func buildCustomResourceInformerFactory(crClient crclientset.Interface) crinform
 	if *namespace != apiv1.NamespaceAll {
 		factoryOpts = append(factoryOpts, crinformers.WithNamespace(*namespace))
 	}
+	if len(*labelSelectorFilter) > 0 {
+		tweakListOptionsFunc := func(options *metav1.ListOptions) {
+			options.LabelSelector = *labelSelectorFilter
+		}
+		factoryOpts = append(factoryOpts, crinformers.WithTweakListOptions(tweakListOptionsFunc))
+	}
 	return crinformers.NewSharedInformerFactoryWithOptions(
 		crClient,
 		// resyncPeriod. Every resyncPeriod, all resources in the cache will re-trigger events.
@@ -258,6 +272,9 @@ func buildPodInformerFactory(kubeClient clientset.Interface) informers.SharedInf
 	}
 	tweakListOptionsFunc := func(options *metav1.ListOptions) {
 		options.LabelSelector = fmt.Sprintf("%s,%s", operatorConfig.SparkRoleLabel, operatorConfig.LaunchedBySparkOperatorLabel)
+		if len(*labelSelectorFilter) > 0 {
+			options.LabelSelector = options.LabelSelector + "," + *labelSelectorFilter
+		}
 	}
 	podFactoryOpts = append(podFactoryOpts, informers.WithTweakListOptions(tweakListOptionsFunc))
 	return informers.NewSharedInformerFactoryWithOptions(kubeClient, time.Duration(*resyncInterval)*time.Second, podFactoryOpts...)
@@ -267,6 +284,12 @@ func buildCoreV1InformerFactory(kubeClient clientset.Interface) informers.Shared
 	var coreV1FactoryOpts []informers.SharedInformerOption
 	if *namespace != apiv1.NamespaceAll {
 		coreV1FactoryOpts = append(coreV1FactoryOpts, informers.WithNamespace(*namespace))
+	}
+	if len(*labelSelectorFilter) > 0 {
+		tweakListOptionsFunc := func(options *metav1.ListOptions) {
+			options.LabelSelector = *labelSelectorFilter
+		}
+		coreV1FactoryOpts = append(coreV1FactoryOpts, informers.WithTweakListOptions(tweakListOptionsFunc))
 	}
 	return informers.NewSharedInformerFactoryWithOptions(kubeClient, time.Duration(*resyncInterval)*time.Second, coreV1FactoryOpts...)
 }

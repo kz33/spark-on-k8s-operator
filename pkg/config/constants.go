@@ -143,6 +143,29 @@ const (
 	SparkExecutorJavaOptions = "spark.executor.extraJavaOptions"
 	// SparkExecutorDeleteOnTermination is the Spark configuration for specifying whether executor pods should be deleted in case of failure or normal termination
 	SparkExecutorDeleteOnTermination = "spark.kubernetes.executor.deleteOnTermination"
+	// SparkDriverKubernetesMaster is the Spark configuration key for specifying the Kubernetes master the driver use
+	// to manage executor pods and other Kubernetes resources.
+	SparkDriverKubernetesMaster = "spark.kubernetes.driver.master"
+	// SparkDriverServiceAnnotationKeyPrefix is the key prefix of annotations to be added to the driver service.
+	SparkDriverServiceAnnotationKeyPrefix = "spark.kubernetes.driver.service.annotation."
+	// SparkDynamicAllocationEnabled is the Spark configuration key for specifying if dynamic
+	// allocation is enabled or not.
+	SparkDynamicAllocationEnabled = "spark.dynamicAllocation.enabled"
+	// SparkDynamicAllocationShuffleTrackingEnabled is the Spark configuration key for
+	// specifying if shuffle data tracking is enabled.
+	SparkDynamicAllocationShuffleTrackingEnabled = "spark.dynamicAllocation.shuffleTracking.enabled"
+	// SparkDynamicAllocationShuffleTrackingTimeout is the Spark configuration key for specifying
+	// the shuffle tracking timeout in milliseconds if shuffle tracking is enabled.
+	SparkDynamicAllocationShuffleTrackingTimeout = "spark.dynamicAllocation.shuffleTracking.timeout"
+	// SparkDynamicAllocationInitialExecutors is the Spark configuration key for specifying
+	// the initial number of executors to request if dynamic allocation is enabled.
+	SparkDynamicAllocationInitialExecutors = "spark.dynamicAllocation.initialExecutors"
+	// SparkDynamicAllocationMinExecutors is the Spark configuration key for specifying the
+	// lower bound of the number of executors to request if dynamic allocation is enabled.
+	SparkDynamicAllocationMinExecutors = "spark.dynamicAllocation.minExecutors"
+	// SparkDynamicAllocationMaxExecutors is the Spark configuration key for specifying the
+	// upper bound of the number of executors to request if dynamic allocation is enabled.
+	SparkDynamicAllocationMaxExecutors = "spark.dynamicAllocation.maxExecutors"
 )
 
 const (
@@ -270,12 +293,18 @@ rules:
 // DefaultPrometheusJavaAgentPort is the default port used by the Prometheus JMX exporter.
 const DefaultPrometheusJavaAgentPort int32 = 8090
 
+// DefaultPrometheusPortProtocol is the default protocol used by the Prometheus JMX exporter.
+const DefaultPrometheusPortProtocol string = "TCP"
+
 const (
 	// SparkDriverContainerName is name of driver container in spark driver pod
 	SparkDriverContainerName = "spark-kubernetes-driver"
 	// SparkExecutorContainerName is name of executor container in spark executor pod
 	SparkExecutorContainerName = "executor"
-
+	// Spark3DefaultExecutorContainerName is the default executor container name in
+	// Spark 3.x, which allows the container name to be configured through the pod
+	// template support.
+	Spark3DefaultExecutorContainerName = "spark-kubernetes-executor"
 	// SparkLocalDirVolumePrefix is the volume name prefix for "scratch" space directory
 	SparkLocalDirVolumePrefix = "spark-local-dir-"
 )

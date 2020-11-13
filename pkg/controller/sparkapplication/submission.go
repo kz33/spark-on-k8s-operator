@@ -96,6 +96,12 @@ func buildSubmissionCommandArgs(app *v1beta2.SparkApplication, driverPodName str
 
 	args = append(args, "--master", masterURL)
 	args = append(args, "--deploy-mode", string(app.Spec.Mode))
+
+	// Add proxy user
+	if app.Spec.ProxyUser != nil {
+		args = append(args, "--proxy-user", *app.Spec.ProxyUser)
+	}
+
 	args = append(args, "--conf", fmt.Sprintf("%s=%s", config.SparkAppNamespaceKey, app.Namespace))
 	args = append(args, "--conf", fmt.Sprintf("%s=%s", config.SparkAppNameKey, app.Name))
 	args = append(args, "--conf", fmt.Sprintf("%s=%s", config.SparkDriverPodNameKey, driverPodName))
@@ -140,11 +146,6 @@ func buildSubmissionCommandArgs(app *v1beta2.SparkApplication, driverPodName str
 		args = append(args, "--conf", fmt.Sprintf("spark.hadoop.%s=%s", key, value))
 	}
 
-	for key, value := range app.Spec.NodeSelector {
-		conf := fmt.Sprintf("%s%s=%s", config.SparkNodeSelectorKeyPrefix, key, value)
-		args = append(args, "--conf", conf)
-	}
-
 	// Add the driver and executor configuration options.
 	// Note that when the controller submits the application, it expects that all dependencies are local
 	// so init-container is not needed and therefore no init-container image needs to be specified.
@@ -161,6 +162,16 @@ func buildSubmissionCommandArgs(app *v1beta2.SparkApplication, driverPodName str
 	}
 	for _, option := range options {
 		args = append(args, "--conf", option)
+	}
+
+	options = addDynamicAllocationConfOptions(app)
+	for _, option := range options {
+		args = append(args, "--conf", option)
+	}
+
+	for key, value := range app.Spec.NodeSelector {
+		conf := fmt.Sprintf("%s%s=%s", config.SparkNodeSelectorKeyPrefix, key, value)
+		args = append(args, "--conf", conf)
 	}
 
 	if app.Spec.Volumes != nil {
@@ -222,6 +233,15 @@ func addDependenciesConfOptions(app *v1beta2.SparkApplication) []string {
 	if len(app.Spec.Deps.PyFiles) > 0 {
 		depsConfOptions = append(depsConfOptions, "--py-files", strings.Join(app.Spec.Deps.PyFiles, ","))
 	}
+	if len(app.Spec.Deps.Packages) > 0 {
+		depsConfOptions = append(depsConfOptions, "--packages", strings.Join(app.Spec.Deps.Packages, ","))
+	}
+	if len(app.Spec.Deps.ExcludePackages) > 0 {
+		depsConfOptions = append(depsConfOptions, "--exclude-packages", strings.Join(app.Spec.Deps.ExcludePackages, ","))
+	}
+	if len(app.Spec.Deps.Repositories) > 0 {
+		depsConfOptions = append(depsConfOptions, "--repositories", strings.Join(app.Spec.Deps.Repositories, ","))
+	}
 
 	return depsConfOptions
 }
@@ -267,7 +287,26 @@ func addDriverConfOptions(app *v1beta2.SparkApplication, submissionID string) ([
 			fmt.Sprintf("%s=%s", config.SparkDriverServiceAccountName, *app.Spec.Driver.ServiceAccount))
 	}
 
+	if app.Spec.Driver.JavaOptions != nil {
+		driverConfOptions = append(driverConfOptions,
+			fmt.Sprintf("%s=%s", config.SparkDriverJavaOptions, *app.Spec.Driver.JavaOptions))
+	}
+
+	if app.Spec.Driver.KubernetesMaster != nil {
+		driverConfOptions = append(driverConfOptions,
+			fmt.Sprintf("%s=%s", config.SparkDriverKubernetesMaster, *app.Spec.Driver.KubernetesMaster))
+	}
+
+	//Populate SparkApplication Labels to Driver
+	driverLabels := make(map[string]string)
+	for key, value := range app.Labels {
+		driverLabels[key] = value
+	}
 	for key, value := range app.Spec.Driver.Labels {
+		driverLabels[key] = value
+	}
+
+	for key, value := range driverLabels {
 		driverConfOptions = append(driverConfOptions,
 			fmt.Sprintf("%s%s=%s", config.SparkDriverLabelKeyPrefix, key, value))
 	}
@@ -282,9 +321,9 @@ func addDriverConfOptions(app *v1beta2.SparkApplication, submissionID string) ([
 			fmt.Sprintf("%s%s=%s:%s", config.SparkDriverSecretKeyRefKeyPrefix, key, value.Name, value.Key))
 	}
 
-	if app.Spec.Driver.JavaOptions != nil {
+	for key, value := range app.Spec.Driver.ServiceAnnotations {
 		driverConfOptions = append(driverConfOptions,
-			fmt.Sprintf("%s=%s", config.SparkDriverJavaOptions, *app.Spec.Driver.JavaOptions))
+			fmt.Sprintf("%s%s=%s", config.SparkDriverServiceAnnotationKeyPrefix, key, value))
 	}
 
 	driverConfOptions = append(driverConfOptions, config.GetDriverSecretConfOptions(app)...)
@@ -340,7 +379,15 @@ func addExecutorConfOptions(app *v1beta2.SparkApplication, submissionID string) 
 			fmt.Sprintf("%s=%t", config.SparkExecutorDeleteOnTermination, *app.Spec.Executor.DeleteOnTermination))
 	}
 
+	//Populate SparkApplication Labels to Executors
+	executorLabels := make(map[string]string)
+	for key, value := range app.Labels {
+		executorLabels[key] = value
+	}
 	for key, value := range app.Spec.Executor.Labels {
+		executorLabels[key] = value
+	}
+	for key, value := range executorLabels {
 		executorConfOptions = append(executorConfOptions,
 			fmt.Sprintf("%s%s=%s", config.SparkExecutorLabelKeyPrefix, key, value))
 	}
@@ -364,6 +411,36 @@ func addExecutorConfOptions(app *v1beta2.SparkApplication, submissionID string) 
 	executorConfOptions = append(executorConfOptions, config.GetExecutorEnvVarConfOptions(app)...)
 
 	return executorConfOptions, nil
+}
+
+func addDynamicAllocationConfOptions(app *v1beta2.SparkApplication) []string {
+	if app.Spec.DynamicAllocation == nil {
+		return nil
+	}
+
+	dynamicAllocation := app.Spec.DynamicAllocation
+	if !dynamicAllocation.Enabled {
+		return nil
+	}
+
+	var options []string
+	options = append(options, fmt.Sprintf("%s=true", config.SparkDynamicAllocationEnabled))
+	// Turn on shuffle tracking if dynamic allocation is enabled.
+	options = append(options, fmt.Sprintf("%s=true", config.SparkDynamicAllocationShuffleTrackingEnabled))
+	if dynamicAllocation.InitialExecutors != nil {
+		options = append(options, fmt.Sprintf("%s=%d", config.SparkDynamicAllocationInitialExecutors, *dynamicAllocation.InitialExecutors))
+	}
+	if dynamicAllocation.MinExecutors != nil {
+		options = append(options, fmt.Sprintf("%s=%d", config.SparkDynamicAllocationMinExecutors, *dynamicAllocation.MinExecutors))
+	}
+	if dynamicAllocation.MaxExecutors != nil {
+		options = append(options, fmt.Sprintf("%s=%d", config.SparkDynamicAllocationMaxExecutors, *dynamicAllocation.MaxExecutors))
+	}
+	if dynamicAllocation.ShuffleTrackingTimeout != nil {
+		options = append(options, fmt.Sprintf("%s=%d", config.SparkDynamicAllocationShuffleTrackingTimeout, *dynamicAllocation.ShuffleTrackingTimeout))
+	}
+
+	return options
 }
 
 // addLocalDirConfOptions excludes local dir volumes, update SparkApplication and returns local dir config options

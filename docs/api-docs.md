@@ -259,6 +259,19 @@ DeployMode
 </tr>
 <tr>
 <td>
+<code>proxyUser</code></br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>ProxyUser specifies the user to impersonate when submitting the application.
+It maps to the command-line flag &ldquo;&ndash;proxy-user&rdquo; in spark-submit.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>image</code></br>
 <em>
 string
@@ -572,6 +585,35 @@ BatchSchedulerConfiguration
 <p>BatchSchedulerOptions provides fine-grained control on how to batch scheduling.</p>
 </td>
 </tr>
+<tr>
+<td>
+<code>sparkUIOptions</code></br>
+<em>
+<a href="#sparkoperator.k8s.io/v1beta2.SparkUIConfiguration">
+SparkUIConfiguration
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>SparkUIOptions allows configuring the Service and the Ingress to expose the sparkUI</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>dynamicAllocation</code></br>
+<em>
+<a href="#sparkoperator.k8s.io/v1beta2.DynamicAllocation">
+DynamicAllocation
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>DynamicAllocation configures dynamic allocation that becomes available for the Kubernetes
+scheduleer backend since Spark 3.0.</p>
+</td>
+</tr>
 </table>
 </td>
 </tr>
@@ -677,7 +719,23 @@ string
 </td>
 <td>
 <em>(Optional)</em>
-<p>PriorityClassName stands for the name of k8s PriorityClass resource, it&rsquo;s being used in Volcano batch scheduler.</p>
+<p>PriorityClassName stands for the name of k8s PriorityClass resource, it&rsquo;s being used for job scheduling and 
+preemption, whether with the Volcano batch scheduler or the Kubernetes default scheduler.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>resources</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.13/#resourcelist-v1-core">
+Kubernetes core/v1.ResourceList
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Resources stands for the resource list custom request for. Usually it is used to define the lower-bound limit.
+If specified, volcano scheduler will consider it as the resources requested.</p>
 </td>
 </tr>
 </tbody>
@@ -741,6 +799,47 @@ string
 <td>
 <em>(Optional)</em>
 <p>PyFiles is a list of Python files the Spark application depends on.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>packages</code></br>
+<em>
+[]string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Packages is a list of maven coordinates of jars to include on the driver and executor
+classpaths. This will search the local maven repo, then maven central and any additional
+remote repositories given by the &ldquo;repositories&rdquo; option.
+Each papckage should be of the form &ldquo;groupId:artifactId:version&rdquo;.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>excludePackages</code></br>
+<em>
+[]string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>ExcludePackages is a list of &ldquo;groupId:artifactId&rdquo;, to exclude while resolving the
+dependencies provided in Packages to avoid dependency conflicts.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>repositories</code></br>
+<em>
+[]string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Repositories is a list of additional remote repositories to search for the maven coordinate
+given with the &ldquo;packages&rdquo; option.</p>
 </td>
 </tr>
 </tbody>
@@ -897,19 +996,6 @@ Maps to <code>spark.kubernetes.driver.request.cores</code> that is available sin
 </tr>
 <tr>
 <td>
-<code>serviceAccount</code></br>
-<em>
-string
-</em>
-</td>
-<td>
-<em>(Optional)</em>
-<p>ServiceAccount is the name of the Kubernetes service account used by the driver pod
-when requesting executor pods from the API server.</p>
-</td>
-</tr>
-<tr>
-<td>
 <code>javaOptions</code></br>
 <em>
 string
@@ -919,6 +1005,131 @@ string
 <em>(Optional)</em>
 <p>JavaOptions is a string of extra JVM options to pass to the driver. For instance,
 GC settings or other logging.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>lifecycle</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.13/#lifecycle-v1-core">
+Kubernetes core/v1.Lifecycle
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Lifecycle for running preStop or postStart commands</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>kubernetesMaster</code></br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>KubernetesMaster is the URL of the Kubernetes master used by the driver to manage executor pods and
+other Kubernetes resources. Default to <a href="https://kubernetes.default.svc">https://kubernetes.default.svc</a>.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>serviceAnnotations</code></br>
+<em>
+map[string]string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>ServiceAnnotations defines the annoations to be added to the Kubernetes headless service used by
+executors to connect to the driver.</p>
+</td>
+</tr>
+</tbody>
+</table>
+<h3 id="sparkoperator.k8s.io/v1beta2.DriverState">DriverState
+(<code>string</code> alias)</p></h3>
+<p>
+<p>DriverState tells the current state of a spark driver.</p>
+</p>
+<h3 id="sparkoperator.k8s.io/v1beta2.DynamicAllocation">DynamicAllocation
+</h3>
+<p>
+(<em>Appears on:</em>
+<a href="#sparkoperator.k8s.io/v1beta2.SparkApplicationSpec">SparkApplicationSpec</a>)
+</p>
+<p>
+<p>DynamicAllocation contains configuration options for dynamic allocation.</p>
+</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>enabled</code></br>
+<em>
+bool
+</em>
+</td>
+<td>
+<p>Enabled controls whether dynamic allocation is enabled or not.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>initialExecutors</code></br>
+<em>
+int32
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>InitialExecutors is the initial number of executors to request. If .spec.executor.instances
+is also set, the initial number of executors is set to the bigger of that and this option.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>minExecutors</code></br>
+<em>
+int32
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>MinExecutors is the lower bound for the number of executors if dynamic allocation is enabled.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>maxExecutors</code></br>
+<em>
+int32
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>MaxExecutors is the upper bound for the number of executors if dynamic allocation is enabled.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>shuffleTrackingTimeout</code></br>
+<em>
+int64
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>ShuffleTrackingTimeout controls the timeout in milliseconds for executors that are holding
+shuffle data if shuffle tracking is enabled (true by default if dynamic allocation is enabled).</p>
 </td>
 </tr>
 </tbody>
@@ -1107,6 +1318,19 @@ string
 <em>(Optional)</em>
 <p>MetricsProperties is the content of a custom metrics.properties for configuring the Spark metric system.
 If not specified, the content in spark-docker/conf/metrics.properties will be used.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>metricsPropertiesFile</code></br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>MetricsPropertiesFile is the container local path of file metrics.properties for configuring
+the Spark metric system. If not specified, value /etc/metrics/conf/metrics.properties will be used.</p>
 </td>
 </tr>
 <tr>
@@ -1340,8 +1564,7 @@ int64
 </td>
 <td>
 <em>(Optional)</em>
-<p>OnSubmissionFailureRetryInterval is the interval between retries on failed submissions.
-Interval to wait between successive retries of a failed application.</p>
+<p>OnSubmissionFailureRetryInterval is the interval in seconds between retries on failed submissions.</p>
 </td>
 </tr>
 <tr>
@@ -1353,7 +1576,7 @@ int64
 </td>
 <td>
 <em>(Optional)</em>
-<p>OnFailureRetryInterval is the interval between retries on failed runs.</p>
+<p>OnFailureRetryInterval is the interval in seconds between retries on failed runs.</p>
 </td>
 </tr>
 </tbody>
@@ -1687,6 +1910,19 @@ DeployMode
 </tr>
 <tr>
 <td>
+<code>proxyUser</code></br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>ProxyUser specifies the user to impersonate when submitting the application.
+It maps to the command-line flag &ldquo;&ndash;proxy-user&rdquo; in spark-submit.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>image</code></br>
 <em>
 string
@@ -1998,6 +2234,35 @@ BatchSchedulerConfiguration
 <td>
 <em>(Optional)</em>
 <p>BatchSchedulerOptions provides fine-grained control on how to batch scheduling.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>sparkUIOptions</code></br>
+<em>
+<a href="#sparkoperator.k8s.io/v1beta2.SparkUIConfiguration">
+SparkUIConfiguration
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>SparkUIOptions allows configuring the Service and the Ingress to expose the sparkUI</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>dynamicAllocation</code></br>
+<em>
+<a href="#sparkoperator.k8s.io/v1beta2.DynamicAllocation">
+DynamicAllocation
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>DynamicAllocation configures dynamic allocation that becomes available for the Kubernetes
+scheduleer backend since Spark 3.0.</p>
 </td>
 </tr>
 </tbody>
@@ -2386,7 +2651,7 @@ Kubernetes core/v1.Affinity
 </tr>
 <tr>
 <td>
-<code>securityContext</code></br>
+<code>podSecurityContext</code></br>
 <em>
 <a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.13/#podsecuritycontext-v1-core">
 Kubernetes core/v1.PodSecurityContext
@@ -2395,7 +2660,21 @@ Kubernetes core/v1.PodSecurityContext
 </td>
 <td>
 <em>(Optional)</em>
-<p>SecurityContenxt specifies the PodSecurityContext to apply.</p>
+<p>PodSecurityContext specifies the PodSecurityContext to apply.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>securityContext</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.13/#securitycontext-v1-core">
+Kubernetes core/v1.SecurityContext
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>SecurityContext specifies the container&rsquo;s SecurityContext to apply.</p>
 </td>
 </tr>
 <tr>
@@ -2477,10 +2756,92 @@ Kubernetes core/v1.PodDNSConfig
 <p>DnsConfig dns settings for the pod, following the Kubernetes specifications.</p>
 </td>
 </tr>
+<tr>
+<td>
+<code>terminationGracePeriodSeconds</code></br>
+<em>
+int64
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Termination grace periond seconds for the pod</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>serviceAccount</code></br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>ServiceAccount is the name of the custom Kubernetes service account used by the pod.</p>
+</td>
+</tr>
+</tbody>
+</table>
+<h3 id="sparkoperator.k8s.io/v1beta2.SparkUIConfiguration">SparkUIConfiguration
+</h3>
+<p>
+(<em>Appears on:</em>
+<a href="#sparkoperator.k8s.io/v1beta2.SparkApplicationSpec">SparkApplicationSpec</a>)
+</p>
+<p>
+<p>SparkUIConfiguration is for driver UI specific configuration parameters.</p>
+</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>servicePort</code></br>
+<em>
+int32
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>ServicePort allows configuring the port at service level that might be different from the targetPort.
+TargetPort should be the same as the one defined in spark.ui.port</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>ingressAnnotations</code></br>
+<em>
+map[string]string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>IngressAnnotations is a map of key,value pairs of annotations that might be added to the ingress object. i.e. specify nginx as ingress.class</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>ingressTLS</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.13/#ingresstls-v1beta1-extensions">
+[]Kubernetes extensions/v1beta1.IngressTLS
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>TlsHosts is useful If we need to declare SSL certificates to the ingress object</p>
+</td>
+</tr>
 </tbody>
 </table>
 <hr/>
 <p><em>
 Generated with <code>gen-crd-api-reference-docs</code>
-on git commit <code>c8ae9e3</code>.
+on git commit <code>cf34460</code>.
 </em></p>
