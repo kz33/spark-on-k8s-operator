@@ -12,45 +12,46 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 apiVersion: "sparkoperator.k8s.io/v1beta2"
 kind: SparkApplication
 metadata:
-  name: spark2.4.5-pi
-  namespace: spark-operator
+  name: pyspark3-pi
+  namespace: test
 spec:
-  type: Scala
+  type: Python
+  pythonVersion: "3"
   mode: cluster
-  image: "gcr.io/spark-operator/spark-py:v2.4.5"
+  image: "clv.cargo.io/release/spark:v3.0.0"
   imagePullPolicy: Always
-  mainClass: org.apache.spark.examples.SparkPi
-  mainApplicationFile: "local:///opt/spark/examples/jars/spark-examples_2.11-2.4.5.jar"
+  mainApplicationFile: local:///opt/spark/examples/src/main/python/pi.py
   sparkVersion: "3.0.0"
   restartPolicy:
-    type: Never
-  volumes:
-    - name: "test-volume"
-      hostPath:
-        path: "/tmp"
-        type: Directory
+    type: OnFailure
+    onFailureRetries: 3
+    onFailureRetryInterval: 10
+    onSubmissionFailureRetries: 5
+    onSubmissionFailureRetryInterval: 20
   driver:
     coreRequest: "0.5"
-    coreLimit: "1200m"
+    coreLimit: "700m"
     memory: "512m"
+    memoryOverhead: "600m"
     labels:
       version: 3.0.0
-    serviceAccount: sparkoperator
-    volumeMounts:
-      - name: "test-volume"
-        mountPath: "/tmp"
+    serviceAccount: spark
   executor:
-    coreRequest: "0.5"
-    instances: 2
+    coreRequest: "0.3"
+    coreLimit: "400m"
+    instances: 3
     memory: "512m"
+    memoryOverhead: "600m"
     labels:
       version: 3.0.0
-    volumeMounts:
-      - name: "test-volume"
-        mountPath: "/tmp"
   arguments:
-    - "100000"
+    - "1000"
+cd /var/log
+rm -rf kubelet*.gz
+rm -rf cron*.gz
+rm -rf dockerd*.gz
+rm -rf messages*.gz
+rm -rf secure*.gz

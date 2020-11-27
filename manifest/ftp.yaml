@@ -1,0 +1,119 @@
+#
+# Copyright 2017 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docker-ssftp
+  namespace: default
+  labels:
+    docker: mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      docker: sftp
+  strategy:
+    type: Recreate
+  template:
+
+    metadata:
+      labels:
+        docker: sftp
+    spec:
+      nodeName: kube-node-4
+      containers:
+        - name: sftp
+          image: clv.cargo.io/release/pure-sftpd
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 21
+            - containerPort: 30000
+            - containerPort: 30001
+            - containerPort: 30002
+            - containerPort: 30003
+            - containerPort: 30004
+            - containerPort: 30005
+            - containerPort: 30006
+            - containerPort: 30007
+            - containerPort: 30008
+            - containerPort: 30009
+          env:
+            - name: PUBLICHOST
+              value: "120.222.204.155"
+            - name: sftp_MAX_CONNECTIONS
+              value: "1024"
+            - name: sftp_USER_HOME
+              value: "/home/test"
+            - name: sftp_USER_PASS
+              value: "test"
+            - name: sftp_USER_NAME
+              value: "test"
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: docker-sftp-svc
+  namespace: default
+spec:
+  ports:
+    - port: 21
+      nodePort: 30021
+      targetPort: 21
+      name: sftp
+    - port: 30000
+      nodePort: 30000
+      targetPort: 30000
+      name: sftp0
+    - port: 30001
+      nodePort: 30001
+      targetPort: 30001
+      name: sftp1
+    - port: 30002
+      nodePort: 30002
+      targetPort: 30002
+      name: sftp2
+    - port: 30003
+      nodePort: 30003
+      targetPort: 30003
+      name: sftp3
+    - port: 30004
+      nodePort: 30004
+      targetPort: 30004
+      name: sftp4
+    - port: 30005
+      nodePort: 30005
+      targetPort: 30005
+      name: sftp5
+    - port: 30006
+      nodePort: 30006
+      targetPort: 30006
+      name: sftp6
+    - port: 30007
+      nodePort: 30007
+      targetPort: 30007
+      name: sftp7
+    - port: 30008
+      nodePort: 30008
+      targetPort: 30008
+      name: sftp8
+    - port: 30009
+      nodePort: 30009
+      targetPort: 30009
+      name: sftp9
+  type: NodePort
+  selector:
+    docker: sftp

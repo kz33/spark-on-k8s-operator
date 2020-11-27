@@ -89,7 +89,7 @@ func runSparkSubmit(exportEnvVars []string, submission *submission) (bool, error
 		if errorMsg != "" {
 			return false, fmt.Errorf("failed to run spark-submit for SparkApplication %s/%s: %s", submission.namespace, submission.name, errorMsg)
 		}
-		return false, fmt.Errorf("failed to run spark-submit for SparkApplication %s/%s: %v", submission.namespace, submission.name, err)
+		return false, fmt.Errorf("failed to run spark-submit for SparkApplication %s/%s: %v", submission.namespace, submission.name, string(output))
 	}
 
 	return true, nil
@@ -171,7 +171,12 @@ func buildSubmissionCommandArgs(app *v1beta2.SparkApplication, driverPodName str
 			keytabPath, err := config.GetK8sSecret(app, *app.Spec.Kerberos.KeytabSecret)
 			if err == nil {
 				keytabkeyLoc := keytabPath + "/" + *app.Spec.Kerberos.KeytabName
-				args = append(args, "--conf", fmt.Sprintf("%s=%s", config.KerberosKeytab, keytabkeyLoc))
+				if strings.HasPrefix(app.Spec.SparkVersion,"3.0"){
+					args = append(args, "--conf", fmt.Sprintf("%s=%s", config.KerberosKeytab, keytabkeyLoc))
+				}else {
+					args = append(args, "--conf", fmt.Sprintf("%s=%s", "keytab", keytabkeyLoc))
+				}
+				//args = append(args, "--conf", fmt.Sprintf("%s=%s", config.KerberosKeytab, keytabkeyLoc))
 			} else {
 				return nil, nil, err
 			}
