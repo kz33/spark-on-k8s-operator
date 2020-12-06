@@ -53,7 +53,7 @@ export SHELL := /bin/bash
 export SHELLOPTS := errexit
 
 # Project main package location.
-CMD_DIR := main.go
+CMD_DIR := ./cmd
 
 # Project output directory.
 OUTPUT_DIR := ./bin
