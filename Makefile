@@ -1,45 +1,152 @@
+# The old school Makefile, following are required targets. The Makefile is written
+# to allow building multiple binaries. You are free to add more targets or change
+# existing implementations, as long as the semantics are preserved.
+#
+#   make              - default to 'build' target
+#   make lint         - code analysis
+#   make test         - run unit test (or plus integration test)
+#   make build        - alias to build-local target
+#   make build-local  - build local binary targets
+#   make build-linux  - build linux binary targets
+#   make container    - build containers
+#   $ docker login registry -u username -p xxxxx
+#   make push         - push containers
+#   make clean        - clean up targets
+#
+# Not included but recommended targets:
+#   make e2e-test
+#
+# The makefile is also responsible to populate project version information.
+#
 
-.SILENT:
-.PHONY: clean-sparkctl
+#
+# Tweak the variables based on your project.
+#
 
-SPARK_OPERATOR_GOPATH=/go/src/github.com/GoogleCloudPlatform/spark-on-k8s-operator
-DEP_VERSION:=`grep DEP_VERSION= Dockerfile | awk -F\" '{print $$2}'`
-BUILDER=`grep "FROM golang:" Dockerfile | awk '{print $$2}'`
-UNAME:=`uname | tr '[:upper:]' '[:lower:]'`
+# This repo's root import path (under GOPATH).
+ROOT := github.com/caicloud/spark-on-k8s-operator
 
-all: clean-sparkctl build-sparkctl install-sparkctl
+# Module name.
+NAME := spark-operator
 
-build-sparkctl:
-	[ ! -f "sparkctl/sparkctl-darwin-amd64" ] || [ ! -f "sparkctl/sparkctl-linux-amd64" ] && \
-	echo building using $(BUILDER) && \
-	docker run -it -w $(SPARK_OPERATOR_GOPATH) \
-	-v $$(pwd):$(SPARK_OPERATOR_GOPATH) $(BUILDER) sh -c \
-	"apk add --no-cache bash git && \
-	cd sparkctl && \
-	./build.sh" || true
+# Container image prefix and suffix added to targets.
+# The final built images are:
+#   $[REGISTRY]/$[IMAGE_PREFIX]$[TARGET]$[IMAGE_SUFFIX]:$[VERSION]
+# $[REGISTRY] is an item from $[REGISTRIES], $[TARGET] is an item from $[TARGETS].
+IMAGE_PREFIX ?= $(strip )
+IMAGE_SUFFIX ?= $(strip )
 
-clean-sparkctl:
-	rm -f sparkctl/sparkctl-darwin-amd64 sparkctl/sparkctl-linux-amd64
+# Container registries.
+REGISTRY ?= cargo.dev.caicloud.xyz/release
 
-install-sparkctl: | sparkctl/sparkctl-darwin-amd64 sparkctl/sparkctl-linux-amd64
-	@if [ "$(UNAME)" = "linux" ]; then \
-		echo "installing linux binary to /usr/local/bin/sparkctl"; \
-		sudo cp sparkctl/sparkctl-linux-amd64 /usr/local/bin/sparkctl; \
-		sudo chmod +x /usr/local/bin/sparkctl; \
-	elif [ "$(UNAME)" = "darwin" ]; then \
-		echo "installing macos binary to /usr/local/bin/sparkctl"; \
-		cp sparkctl/sparkctl-darwin-amd64 /usr/local/bin/sparkctl; \
-		chmod +x /usr/local/bin/sparkctl; \
-	else \
-		echo "$(UNAME) not supported"; \
-	fi
+# Container registry for base images.
+BASE_REGISTRY ?= cargo.caicloud.xyz/library
 
-build-api-docs:
-	hack/api-ref-docs \
-	-config hack/api-docs-config.json \
-	-api-dir github.com/GoogleCloudPlatform/spark-on-k8s-operator/pkg/apis/sparkoperator.k8s.io/v1beta2 \
-	-template-dir hack/api-docs-template \
-	-out-file docs/api-docs.md
+#
+# These variables should not need tweaking.
+#
 
-helm-docs:
-	helm-docs -c ./charts
+# It's necessary to set this because some environments don't link sh -> bash.
+export SHELL := /bin/bash
+
+# It's necessary to set the errexit flags for the bash shell.
+export SHELLOPTS := errexit
+
+# Project main package location.
+CMD_DIR := main.go
+
+# Project output directory.
+OUTPUT_DIR := ./bin
+
+# Build directory.
+BUILD_DIR := ./build
+
+IMAGE_NAME := $(IMAGE_PREFIX)$(NAME)$(IMAGE_SUFFIX)
+
+# Current version of the project.
+GOCOMMON     := $(shell if [ ! -f go.mod ]; then echo $(ROOT)/vendor/; fi)github.com/caicloud/go-common
+VERSION      ?= $(shell git describe --tags --always --dirty)
+BRANCH       ?= $(shell git branch | grep \* | cut -d ' ' -f2)
+GITCOMMIT    ?= $(shell git rev-parse HEAD)
+GITTREESTATE ?= $(if $(shell git status --porcelain),dirty,clean)
+BUILDDATE    ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Available cpus for compiling, please refer to https://github.com/caicloud/engineering/issues/8186#issuecomment-518656946 for more information.
+CPUS ?= $(shell /bin/bash hack/read_cpus_available.sh)
+
+# Track code version with Docker Label.
+DOCKER_LABELS ?= git-describe="$(shell date -u +v%Y%m%d)-$(shell git describe --tags --always --dirty)"
+
+# Golang standard bin directory.
+GOPATH ?= $(shell go env GOPATH)
+BIN_DIR := $(GOPATH)/bin
+GOLANGCI_LINT := $(BIN_DIR)/golangci-lint
+
+# Default golang flags used in build and test
+# -mod=vendor: force go to use the vendor files instead of using the `$GOPATH/pkg/mod`
+# -p: the number of programs that can be run in parallel
+# -count: run each test and benchmark 1 times. Set this flag to disable test cache
+export GOFLAGS ?= -mod=vendor -p=$(CPUS) -count=1
+
+#
+# Define all targets. At least the following commands are required:
+#
+
+# All targets.
+.PHONY: lint test build container push
+
+build: build-local
+
+# more info about `GOGC` env: https://github.com/golangci/golangci-lint#memory-usage-of-golangci-lint
+lint: golangci-lint
+	@$(GOLANGCI_LINT) run
+
+golangci-lint:
+ifeq ("$(wildcard $(GOLANGCI_LINT))","")
+	curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(BIN_DIR) v1.23.6
+endif
+
+test:
+	@go test -coverprofile=coverage.out ./...
+	@go tool cover -func coverage.out | tail -n 1 | awk '{ print "Total coverage: " $$3 }'
+
+build-local:
+	@go build -v -o $(OUTPUT_DIR)/$(NAME)                                                                                         \
+	  -ldflags "-s -w -X $(GOCOMMON)/version.module=$(NAME)                                                                       \
+	    -X $(GOCOMMON)/version.version=$(VERSION)                                                                                 \
+	    -X $(GOCOMMON)/version.branch=$(BRANCH)                                                                                   \
+	    -X $(GOCOMMON)/version.gitCommit=$(GITCOMMIT)                                                                             \
+	    -X $(GOCOMMON)/version.gitTreeState=$(GITTREESTATE)                                                                       \
+	    -X $(GOCOMMON)/version.buildDate=$(BUILDDATE)"                                                                            \
+	  $(CMD_DIR);
+
+build-linux:
+	@docker run --rm -it                                                                                                          \
+	  -v $(PWD):/go/src/$(ROOT)                                                                                                   \
+	  -w /go/src/$(ROOT)                                                                                                          \
+	  -e GOOS=linux                                                                                                               \
+	  -e GOARCH=amd64                                                                                                             \
+	  -e GOPATH=/go                                                                                                               \
+	  -e GOFLAGS="$(GOFLAGS)"                                                                                                     \
+	  -e SHELLOPTS="$(SHELLOPTS)"                                                                                                 \
+	  $(BASE_REGISTRY)/golang:1.13-security                                                                                       \
+	    /bin/bash -c 'go build -v -o $(OUTPUT_DIR)/$(NAME)                                                                        \
+	      -ldflags "-s -w -X $(GOCOMMON)/version.module=$(NAME)                                                                   \
+	        -X $(GOCOMMON)/version.version=$(VERSION)                                                                             \
+	        -X $(GOCOMMON)/version.branch=$(BRANCH)                                                                               \
+	        -X $(GOCOMMON)/version.gitCommit=$(GITCOMMIT)                                                                         \
+	        -X $(GOCOMMON)/version.gitTreeState=$(GITTREESTATE)                                                                   \
+	        -X $(GOCOMMON)/version.buildDate=$(BUILDDATE)"                                                                        \
+	      $(CMD_DIR)'
+
+container: build-linux
+	@docker build -t $(REGISTRY)/$(IMAGE_NAME):$(VERSION)                                                                         \
+	  --label $(DOCKER_LABELS)                                                                                                    \
+	  -f $(BUILD_DIR)/Dockerfile .;
+
+push: container
+	@docker push $(REGISTRY)/$(IMAGE_NAME):$(VERSION);
+
+.PHONY: clean
+clean:
+	@-rm -vrf ${OUTPUT_DIR}
