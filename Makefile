@@ -107,11 +107,11 @@ ifeq ("$(wildcard $(GOLANGCI_LINT))","")
 endif
 
 test:
-	@go test -coverprofile=coverage.out ./...
+	@go test -p $(CPUS) $$(go list ./... | grep -v /vendor | grep -v /test) -coverprofile=coverage.out
 	@go tool cover -func coverage.out | tail -n 1 | awk '{ print "Total coverage: " $$3 }'
 
 build-local:
-	@go build -v -o $(OUTPUT_DIR)/$(NAME)                                                                                         \
+	@go build -v -o $(OUTPUT_DIR)/$(NAME) -p $(CPUS)                                                                              \
 	  -ldflags "-s -w -X $(GOCOMMON)/version.module=$(NAME)                                                                       \
 	    -X $(GOCOMMON)/version.version=$(VERSION)                                                                                 \
 	    -X $(GOCOMMON)/version.branch=$(BRANCH)                                                                                   \
@@ -124,13 +124,14 @@ build-linux:
 	@docker run --rm -it                                                                                                          \
 	  -v $(PWD):/go/src/$(ROOT)                                                                                                   \
 	  -w /go/src/$(ROOT)                                                                                                          \
+	  -e CGO_ENABLED="0"                                                                                                            \
 	  -e GOOS=linux                                                                                                               \
 	  -e GOARCH=amd64                                                                                                             \
 	  -e GOPATH=/go                                                                                                               \
 	  -e GOFLAGS="$(GOFLAGS)"                                                                                                     \
 	  -e SHELLOPTS="$(SHELLOPTS)"                                                                                                 \
-	  $(BASE_REGISTRY)/golang:1.13-security                                                                                       \
-	    /bin/bash -c 'go build -v -o $(OUTPUT_DIR)/$(NAME)                                                                        \
+	  $(BASE_REGISTRY)/golang:1.14-security                                                                                       \
+	    /bin/bash -c 'go build -v -o $(OUTPUT_DIR)/$(NAME) -p $(CPUS)                                                             \
 	      -ldflags "-s -w -X $(GOCOMMON)/version.module=$(NAME)                                                                   \
 	        -X $(GOCOMMON)/version.version=$(VERSION)                                                                             \
 	        -X $(GOCOMMON)/version.branch=$(BRANCH)                                                                               \
