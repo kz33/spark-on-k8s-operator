@@ -1,6 +1,6 @@
 .vscode/
 vendor/
-spark-operator
+bin/
 .idea/
 **/*.iml
 sparkctl/sparkctl
