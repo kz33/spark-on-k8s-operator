@@ -87,7 +87,6 @@ GOLANGCI_LINT := $(BIN_DIR)/golangci-lint
 # -p: the number of programs that can be run in parallel
 # -count: run each test and benchmark 1 times. Set this flag to disable test cache
 export GOFLAGS ?= -mod=vendor -p=$(CPUS) -count=1
-
 #
 # Define all targets. At least the following commands are required:
 #
@@ -124,7 +123,8 @@ build-linux:
 	@docker run --rm -it                                                                                                          \
 	  -v $(PWD):/go/src/$(ROOT)                                                                                                   \
 	  -w /go/src/$(ROOT)                                                                                                          \
-	  -e CGO_ENABLED="0"                                                                                                            \
+	  -e GO111MODULE=off                                                                                                          \
+	  -e CGO_ENABLED="0"                                                                                                          \
 	  -e GOOS=linux                                                                                                               \
 	  -e GOARCH=amd64                                                                                                             \
 	  -e GOPATH=/go                                                                                                               \
